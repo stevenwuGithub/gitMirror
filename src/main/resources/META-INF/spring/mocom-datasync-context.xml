@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:aop="http://www.springframework.org/schema/aop"
+       xmlns:context="http://www.springframework.org/schema/context" xmlns:tx="http://www.springframework.org/schema/tx"
+       xmlns:jee="http://www.springframework.org/schema/jee"
+
+
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-3.2.xsd
+                           http://www.springframework.org/schema/tx http://www.springframework.org/schema/tx/spring-tx-3.2.xsd
+                           http://www.springframework.org/schema/aop http://www.springframework.org/schema/aop/spring-aop-3.2.xsd
+                           http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-3.2.xsd
+                           http://www.springframework.org/schema/jee http://www.springframework.org/schema/jee/spring-jee-3.2.xsd">
+    <context:annotation-config />                           
+    <context:component-scan base-package="com.isis.wps.service.mocom" />
+    <context:component-scan base-package="com.isis.wps.persistence" />
+
+	<jee:jndi-lookup id="jmsProviderURL" jndi-name="java:comp/env/jms/provider/url"/>	
+	
+	<bean id="jndiTemplate" class="org.springframework.jndi.JndiTemplate">
+		<property name="environment">
+			<props>
+				<prop key="java.naming.factory.initial">
+					weblogic.jndi.WLInitialContextFactory
+				</prop>
+				
+				<!-- prop key="java.naming.provider.url">t3://localhost:7001</prop-->
+				<prop key="java.naming.provider.url">#{jmsProviderURL}</prop> 
+				<prop key="java.naming.security.authentication">simple</prop>
+				
+			</props>
+		</property>
+	</bean>
+	<bean id="topicConnectionFactory" class="org.springframework.jndi.JndiObjectFactoryBean">
+		<property name="exposeAccessContext" value="true"/>
+		<property name="jndiTemplate">
+			<ref bean="jndiTemplate" />
+		</property>
+		<property name="jndiName">
+			<jee:jndi-lookup jndi-name="java:comp/env/jms/pub/cf"/>
+		</property>
+	</bean>
+	<bean id="jmsDestinationResolver"
+		class="org.springframework.jms.support.destination.JndiDestinationResolver">
+		<property name="jndiTemplate">
+			<ref bean="jndiTemplate" />
+		</property>
+		<property name="cache">
+			<value>true</value>
+		</property>
+	</bean>
+
+	<!-- Topic Sender -->
+	<bean id="sendTopicTemplate" class="org.springframework.jms.core.JmsTemplate">
+		<property name="connectionFactory">
+			<ref bean="topicConnectionFactory" />
+		</property>
+		<property name="destinationResolver">
+			<ref bean="jmsDestinationResolver" />
+		</property>
+	</bean>
+	<bean id="dataSyncTopicSender" class="com.paywithisis.datasync.DataSyncTopicSender">
+		<property name="jmsTemplate">
+			<ref bean="sendTopicTemplate" />
+		</property>
+		<property name="dataSyncTopicName"> 
+					<jee:jndi-lookup jndi-name="java:comp/env/jms/datasync/topic"/>
+		</property>
+	</bean>
+	<bean id="deadletterQueueSender" class="com.paywithisis.datasync.utils.QueueSender">
+		<property name="jmsTemplate">
+			<ref bean="sendTopicTemplate" />
+		</property>
+		<property name="queueName"> 
+					<jee:jndi-lookup jndi-name="java:comp/env/jms/deadletter/queue"/>
+		</property>
+	</bean>
+	
+	<!-- Topic Subscriber -->
+	<bean id="dataSyncTopicSubscriber" class="com.paywithisis.datasync.DataSyncTopicSubscriber">
+		<property name="deadletterQueueSender" ref="deadletterQueueSender" />
+	</bean>
+	<bean id="dataSyncTopic" class="org.springframework.jndi.JndiObjectFactoryBean">
+		<property name="jndiTemplate">
+			<ref bean="jndiTemplate" />
+		</property>
+		<property name="jndiName"> 
+					<jee:jndi-lookup jndi-name="java:comp/env/jms/datasync/topic"/>
+		</property> 
+	</bean>
+	<bean id="dataSyncSubscriber"
+		class="org.springframework.jms.listener.TDefaultMessageListenerContainer">
+		<property name="connectionFactory" ref="topicConnectionFactory" />
+		<property name="destination" ref="dataSyncTopic" />
+		<property name="messageListener" ref="dataSyncTopicSubscriber" />
+		<property name="PubSubDomain" value="true"/>
+		<property name="sessionTransacted" value="true"/>
+	</bean>
+</beans>
